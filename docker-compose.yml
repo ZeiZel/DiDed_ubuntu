@@ -1,0 +1,23 @@
+services:
+  ubuntu-dev:
+    build:
+      context: .
+      args:
+        DISTRO_IMAGE: ${DISTRO_IMAGE}
+        DISTRO_VERSION: ${DISTRO_VERSION}
+        USERNAME: ${USER_NAME}
+        USER_UID: 1000
+        USER_GID: 1000
+        DOTFILES_DIR: .dotfiles
+    container_name: dev-env
+    stdin_open: true
+    tty: true
+    privileged: true
+    volumes:
+      - ./dns_servers.txt:/tmp/dns_servers.txt:ro
+      - ~/${USER_NAME}:/mnt/sys
+      - ~/lvovvv/.ssh:/home/${USER_NAME}/.ssh:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    working_dir: /mnt/c
+    restart: unless-stopped
+    command: zsh

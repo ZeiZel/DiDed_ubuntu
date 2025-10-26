@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ARG DISTRO_IMAGE=ubuntu
 ARG DISTRO_VERSION=24.04
 
@@ -9,6 +10,7 @@ ARG USER_GID=$USER_UID
 ARG DOTFILES_DIR=.dotfiles
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    container=docker \
     TZ=UTC \
     LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
@@ -21,6 +23,22 @@ ENV HOMEBREW_FORCE_BREWED_CURL=0 \
     CURLOPT_SSL_VERIFYHOST=0 \
     HOMEBREW_INSTALL_FROM_API=1 \
     HOMEBREW_CURLRC=1
+
+RUN apt-get update && \
+    apt-get install -y systemd systemd-sysv dbus sudo locales tzdata && \
+    apt-get install -y curl wget git zsh fzf ripgrep jq fd-find eza htop btop && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Удаляем ненужные юниты systemd, чтобы ускорить контейнер
+RUN (cd /lib/systemd/system/sysinit.target.wants/; \
+    for i in *; do [ $i = systemd-tmpfiles-setup.service ] || rm -f $i; done); \
+    rm -f /lib/systemd/system/multi-user.target.wants/*; \
+    rm -f /etc/systemd/system/*.wants/*; \
+    rm -f /lib/systemd/system/local-fs.target.wants/*; \
+    rm -f /lib/systemd/system/sockets.target.wants/*udev*; \
+    rm -f /lib/systemd/system/sockets.target.wants/*initctl*; \
+    rm -f /lib/systemd/system/basic.target.wants/*; \
+    rm -f /lib/systemd/system/anaconda.target.wants/*
 
 # locale install: en, ru
 RUN apt update && \
@@ -182,5 +200,7 @@ RUN source $HOME/.zshrc || true
 RUN echo "Install ended! :)"
 
 # tech
-WORKDIR /mnt
-CMD ["zsh"]
+VOLUME ["/sys/fs/cgroup"]
+WORKDIR /home/${USERNAME}
+
+CMD ["/sbin/init"]

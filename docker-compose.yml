@@ -2,17 +2,26 @@ services:
   ubuntu-dev:
     build:
       context: .
+      args:
+        DISTRO_IMAGE: ${DISTRO_IMAGE}
+        DISTRO_VERSION: ${DISTRO_VERSION}
+        USERNAME: ${USER_NAME}
+        USER_UID: 1000
+        USER_GID: 1000
+        DOTFILES_DIR: .dotfiles
     container_name: ubuntu-dev-systemd
     privileged: true
     stdin_open: true
     tty: true
+    environment:
+      - container=docker
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro
-      - /run/dbus:/run/dbus:ro
       - type: tmpfs
         target: /run
       - type: tmpfs
-        target: /run/lock
+        target: /tmp
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /run/dbus:/run/dbus:ro
       - ./workspace:/mnt
-    command: /sbin/init
+    command: ["/sbin/init"]
     restart: unless-stopped

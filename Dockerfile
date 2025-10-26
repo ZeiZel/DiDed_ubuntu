@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 ARG DISTRO_IMAGE=ubuntu
 ARG DISTRO_VERSION=24.04
-
-FROM docker.io/${DISTRO_IMAGE}:${DISTRO_VERSION}
-
 ARG USERNAME=any
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG DOTFILES_DIR=.dotfiles
+
+FROM docker.io/${DISTRO_IMAGE}:${DISTRO_VERSION} AS base
+FROM base AS config
 
 ENV DEBIAN_FRONTEND=noninteractive \
     container=docker \
@@ -24,22 +24,6 @@ ENV HOMEBREW_FORCE_BREWED_CURL=0 \
     HOMEBREW_INSTALL_FROM_API=1 \
     HOMEBREW_CURLRC=1
 
-RUN apt-get update && \
-    apt-get install -y systemd systemd-sysv dbus sudo locales tzdata && \
-    apt-get install -y curl wget git zsh fzf ripgrep jq fd-find eza htop btop && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Удаляем ненужные юниты systemd, чтобы ускорить контейнер
-RUN (cd /lib/systemd/system/sysinit.target.wants/; \
-    for i in *; do [ $i = systemd-tmpfiles-setup.service ] || rm -f $i; done); \
-    rm -f /lib/systemd/system/multi-user.target.wants/*; \
-    rm -f /etc/systemd/system/*.wants/*; \
-    rm -f /lib/systemd/system/local-fs.target.wants/*; \
-    rm -f /lib/systemd/system/sockets.target.wants/*udev*; \
-    rm -f /lib/systemd/system/sockets.target.wants/*initctl*; \
-    rm -f /lib/systemd/system/basic.target.wants/*; \
-    rm -f /lib/systemd/system/anaconda.target.wants/*
-
 # locale install: en, ru
 RUN apt update && \
     apt install -y locales && \
@@ -47,7 +31,8 @@ RUN apt update && \
     update-locale LANG=ru_RU.UTF-8 LC_MESSAGES=POSIX && \
     rm -rf /var/lib/apt/lists/*
 
-# deps
+FROM config AS deps
+
 RUN apt update
 RUN apt-get autoremove && apt-get clean
 RUN apt-get install -y \
@@ -122,6 +107,8 @@ RUN ln -sf /usr/bin/fd   /usr/local/bin/fd && \
     ln -sf /usr/bin/tar  /usr/bin/gtar
 RUN rm -rf /var/lib/apt/lists/* && update-ca-certificates --fresh
 
+FROM deps AS user
+
 # current user (add docker group, implement docker group, create current user, setting sudo)
 RUN \
     if ! getent group docker >/dev/null; then \
@@ -154,10 +141,35 @@ RUN \
 USER $USERNAME
 WORKDIR /home/$USERNAME
 
-# dots
-RUN cd ~/  \
-    && git clone https://github.com/ZeiZel/dotfiles.git ~/${DOTFILES_DIR}
-WORKDIR /home/$USERNAME/${DOTFILES_DIR}
+FROM user AS systemd
+
+RUN apt-get update && \
+    apt-get install -y systemd systemd-sysv dbus sudo locales tzdata && \
+    apt-get install -y curl wget git zsh fzf ripgrep jq fd-find eza htop btop && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# delete unused units systemd for container performance
+RUN (cd /lib/systemd/system/sysinit.target.wants/; \
+    for i in *; do [ $i = systemd-tmpfiles-setup.service ] || rm -f $i; done); \
+    rm -f /lib/systemd/system/multi-user.target.wants/*; \
+    rm -f /etc/systemd/system/*.wants/*; \
+    rm -f /lib/systemd/system/local-fs.target.wants/*; \
+    rm -f /lib/systemd/system/sockets.target.wants/*udev*; \
+    rm -f /lib/systemd/system/sockets.target.wants/*initctl*; \
+    rm -f /lib/systemd/system/basic.target.wants/*; \
+    rm -f /lib/systemd/system/anaconda.target.wants/*
+
+FROM systemd as dots
+
+USER $USERNAME
+WORKDIR /home/$USERNAME
+
+ARG DOTFILES_DIR=.dotfiles
+RUN rm -rf /home/${USERNAME}/${DOTFILES_DIR} && \
+    git clone https://github.com/ZeiZel/dotfiles.git /home/${USERNAME}/${DOTFILES_DIR} && \
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/${DOTFILES_DIR}
+WORKDIR /home/${USERNAME}/${DOTFILES_DIR}
+
 RUN curl -kfsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash \
     && echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc \
     && { [ -f ~/${DOTFILES_DIR}/.zshrc ] && rm -rf ~/.zshrc && ln -sf ~/${DOTFILES_DIR}/.zshrc ~/.zshrc || true; } \
@@ -165,29 +177,23 @@ RUN curl -kfsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/i
 RUN git clone https://github.com/zsh-users/antigen.git ~/antigen
 RUN /bin/zsh -c 'source ~/antigen/antigen.zsh'
 RUN \
-    cd ~/${DOTFILES_DIR} \
-    && mkdir -p ~/.config \
+    mkdir -p ~/.config \
     && rm ~/.zshrc \
-    && ln -s ~/${DOTFILES_DIR}/zshrc/.zshrc ~/.zshrc \
+    && ln -s ~/$DOTFILES_DIR/zshrc/.zshrc ~/.zshrc \
     && stow .
 
-# binary
+# brew
 WORKDIR /home/$USERNAME
 
 RUN echo "insecure" > ~/.curlrc
-RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-RUN echo >> /home/lvovvv/.zshrc \
-    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/lvovvv/.zshrc \
+RUN mkdir -p /run && touch /run/.containerenv && NONINTERACTIVE=1 /bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+RUN echo >> /home/$USERNAME/.zshrc \
+    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/$USERNAME/.zshrc \
     && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 RUN source ~/.zshrc || true
 RUN cd ~/.config && brew bundle || true
 
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-
-# docker
-RUN curl -o- https://get.docker.com | bash
-# RUN sudo systemctl docker start
-# RUN sudo systemctl docker status
 
 # tmux
 RUN if [ ! -d ~/.tmux ]; then mkdir -p ~/.tmux; fi
@@ -199,7 +205,14 @@ RUN source $HOME/.zshrc || true
 
 RUN echo "Install ended! :)"
 
-# tech
+FROM dots as docker
+
+RUN curl -o- https://get.docker.com | bash
+#RUN sudo systemctl start docker
+#RUN sudo systemctl status docker
+
+FROM docker as final
+
 VOLUME ["/sys/fs/cgroup"]
 WORKDIR /home/${USERNAME}
 

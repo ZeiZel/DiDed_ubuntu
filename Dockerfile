@@ -5,6 +5,7 @@ ARG USERNAME=any
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG DOTFILES_DIR=.dotfiles
+ARG CUSTOM_DOTS_URL=https://github.com/ZeiZel/dotfiles.git
 
 FROM docker.io/${DISTRO_IMAGE}:${DISTRO_VERSION} AS base
 FROM base AS config
@@ -208,12 +209,14 @@ RUN echo "Install ended! :)"
 FROM dots as docker
 
 RUN curl -o- https://get.docker.com | bash
-#RUN sudo systemctl start docker
-#RUN sudo systemctl status docker
+
+COPY ./scripts/systemd/post-boot.sh /usr/local/bin/post-boot.sh
+RUN chmod +x /usr/local/bin/post-boot.sh && \
+    printf "[Unit]\nDescription=Post-Boot Initialization Script\nAfter=multi-user.target\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/post-boot.sh\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n" > /etc/systemd/system/post-boot.service && \
+    systemctl enable post-boot.service
 
 FROM docker as final
 
 VOLUME ["/sys/fs/cgroup"]
 WORKDIR /home/${USERNAME}
-
 CMD ["/sbin/init"]

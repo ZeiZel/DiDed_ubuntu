@@ -3,6 +3,7 @@ services:
     build:
       context: .
       args:
+        CUSTOM_DOTS_URL: ${CUSTOM_DOTS_URL}
         DISTRO_IMAGE: ${DISTRO_IMAGE}
         DISTRO_VERSION: ${DISTRO_VERSION}
         USERNAME: ${USER_NAME}
@@ -20,8 +21,8 @@ services:
         target: /run
       - type: tmpfs
         target: /tmp
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro
-      - /run/dbus:/run/dbus:ro
-      - ./workspace:/mnt
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - /run/dbus:/run/dbus:rw
+      - ${WORKING_DIRECTORY:-./workspace}:/mnt:rw
     command: ["/sbin/init"]
     restart: unless-stopped

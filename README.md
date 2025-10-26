@@ -6,7 +6,9 @@ For what:
 - if you are unable to use WSL, you can up all in Docker
 - dockerconainers, bro
 
-# How to start
+## How to start
+
+### Build image
 
 Docker compose:
 
@@ -26,4 +28,10 @@ docker run -itd \
   --tmpfs /run/lock \
   ubuntu-dev:latest \
   /sbin/init
+```
+
+### Connect to image
+
+```bash
+docker exec -it ubuntu-dev-systemd zsh
 ```

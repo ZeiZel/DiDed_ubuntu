@@ -2,27 +2,31 @@ services:
   ubuntu-dev:
     build:
       context: .
+      dockerfile: Dockerfile
       args:
-        CUSTOM_DOTS_URL: ${CUSTOM_DOTS_URL}
+        USE_INSECURE_REQ: ${USE_INSECURE_REQ:-1}
         DISTRO_IMAGE: ${DISTRO_IMAGE}
         DISTRO_VERSION: ${DISTRO_VERSION}
         USERNAME: ${USER_NAME}
         USER_UID: 1000
         USER_GID: 1000
-        DOTFILES_DIR: .dotfiles
-    container_name: ubuntu-dev-systemd
+        DOTFILES_DIR: ${DOTFILES_DIR:-.dotfiles}
+        CUSTOM_DOTS_URL: ${CUSTOM_DOTS_URL}
+    container_name: ${CONTAINER_NAME:-ubuntu-systemd}
     privileged: true
     stdin_open: true
     tty: true
     environment:
-      - container=docker
+      - container=docker # used for brew
     volumes:
+      # important volumes for systemd
       - type: tmpfs
         target: /run
       - type: tmpfs
         target: /tmp
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - /run/dbus:/run/dbus:rw
+      # your working directory in system machine
       - ${WORKING_DIRECTORY:-./workspace}:/mnt:rw
-    command: ["/sbin/init"]
+    command: ["/sbin/init"] # init systemd
     restart: unless-stopped

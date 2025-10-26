@@ -4,13 +4,13 @@ ARG DISTRO_VERSION=24.04
 ARG USERNAME=any
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
-ARG DOTFILES_DIR=.dotfiles
-ARG CUSTOM_DOTS_URL=https://github.com/ZeiZel/dotfiles.git
+ARG USE_INSECURE_REQ=1
 
 FROM docker.io/${DISTRO_IMAGE}:${DISTRO_VERSION} AS base
 FROM base AS config
 
-ENV DEBIAN_FRONTEND=noninteractive \
+ENV \
+    DEBIAN_FRONTEND=noninteractive \
     container=docker \
     TZ=UTC \
     LANG=en_US.UTF-8 \
@@ -18,15 +18,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
     USER_NAME=${USERNAME} \
     USER_UID=${USER_UID} \
     USER_GID=${USER_GID}
-ENV HOMEBREW_FORCE_BREWED_CURL=0 \
-    HOMEBREW_NO_SSL=1 \
-    CURLOPT_SSL_VERIFYPEER=0 \
-    CURLOPT_SSL_VERIFYHOST=0 \
-    HOMEBREW_INSTALL_FROM_API=1 \
-    HOMEBREW_CURLRC=1
+
+# insecure flag
+RUN \
+    if [ "${USE_INSECURE_REQ}" = "1" ]; then \
+      echo "export HOMEBREW_SSL_FLAG=1" >> /etc/profile.d/ssl_flags.sh; \
+    else \
+      echo "export HOMEBREW_SSL_FLAG=0" >> /etc/profile.d/ssl_flags.sh; \
+    fi
+
+ENV \
+    HOMEBREW_FORCE_BREWED_CURL=${HOMEBREW_SSL_FLAG} \
+    HOMEBREW_NO_SSL=${HOMEBREW_SSL_FLAG} \
+    CURLOPT_SSL_VERIFYPEER=${HOMEBREW_SSL_FLAG} \
+    CURLOPT_SSL_VERIFYHOST=${HOMEBREW_SSL_FLAG} \
+    HOMEBREW_INSTALL_FROM_API=${HOMEBREW_SSL_FLAG} \
+    HOMEBREW_CURLRC=${HOMEBREW_SSL_FLAG}
 
 # locale install: en, ru
-RUN apt update && \
+RUN \
+    apt update && \
     apt install -y locales && \
     locale-gen en_US.UTF-8 ru_RU.UTF-8 && \
     update-locale LANG=ru_RU.UTF-8 LC_MESSAGES=POSIX && \
@@ -162,15 +173,19 @@ RUN (cd /lib/systemd/system/sysinit.target.wants/; \
 
 FROM systemd as dots
 
+ARG DOTFILES_DIR=.dotfiles
+ARG CUSTOM_DOTS_URL=https://github.com/ZeiZel/dotfiles.git
+
 USER $USERNAME
 WORKDIR /home/$USERNAME
 
-ARG DOTFILES_DIR=.dotfiles
-RUN rm -rf /home/${USERNAME}/${DOTFILES_DIR} && \
-    git clone https://github.com/ZeiZel/dotfiles.git /home/${USERNAME}/${DOTFILES_DIR} && \
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/${DOTFILES_DIR}
-WORKDIR /home/${USERNAME}/${DOTFILES_DIR}
+# dots
+RUN rm -rf /home/$USERNAME/$DOTFILES_DIR
+RUN git clone $CUSTOM_DOTS_URL /home/$USERNAME/$DOTFILES_DIR
+RUN chown -R $USERNAME:$USERNAME /home/$USERNAME/$DOTFILES_DIR
+WORKDIR /home/$USERNAME/$DOTFILES_DIR
 
+# Configure ZSH
 RUN curl -kfsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash \
     && echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc \
     && { [ -f ~/${DOTFILES_DIR}/.zshrc ] && rm -rf ~/.zshrc && ln -sf ~/${DOTFILES_DIR}/.zshrc ~/.zshrc || true; } \

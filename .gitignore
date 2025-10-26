@@ -2,3 +2,7 @@
 .vscode
 build
 workspace
+.env
+.env.*
+
+!.env.example

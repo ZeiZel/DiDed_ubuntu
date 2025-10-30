@@ -44,6 +44,16 @@ docker run -itd \
 docker exec -it ubuntu-dev-systemd zsh
 ```
 
+## Troubleshooting
+
+### Image not pull automaticly
+
+You may need to install image manually
+
+```bash
+docker pull ubuntu:24.04
+```
+
 ## TODO
 
 - [ ] Need to create more comprehensive dots clone script (now it works only with stow-based configs)

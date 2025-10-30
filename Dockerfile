@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 ARG DISTRO_IMAGE=ubuntu
 ARG DISTRO_VERSION=24.04
 ARG USERNAME=any
@@ -13,43 +12,37 @@ ENV \
     DEBIAN_FRONTEND=noninteractive \
     container=docker \
     TZ=UTC \
-    LANG=en_US.UTF-8 \
-    LC_ALL=en_US.UTF-8 \
+    LC_ALL=C \
     USER_NAME=${USERNAME} \
     USER_UID=${USER_UID} \
     USER_GID=${USER_GID}
 
-# insecure flag
-RUN \
-    if [ "${USE_INSECURE_REQ}" = "1" ]; then \
-      echo "export HOMEBREW_SSL_FLAG=1" >> /etc/profile.d/ssl_flags.sh; \
-    else \
-      echo "export HOMEBREW_SSL_FLAG=0" >> /etc/profile.d/ssl_flags.sh; \
-    fi
-
 ENV \
-    HOMEBREW_FORCE_BREWED_CURL=${HOMEBREW_SSL_FLAG} \
-    HOMEBREW_NO_SSL=${HOMEBREW_SSL_FLAG} \
     CURLOPT_SSL_VERIFYPEER=${HOMEBREW_SSL_FLAG} \
-    CURLOPT_SSL_VERIFYHOST=${HOMEBREW_SSL_FLAG} \
-    HOMEBREW_INSTALL_FROM_API=${HOMEBREW_SSL_FLAG} \
-    HOMEBREW_CURLRC=${HOMEBREW_SSL_FLAG}
+    CURLOPT_SSL_VERIFYHOST=${HOMEBREW_SSL_FLAG}
 
 # locale install: en, ru
 RUN \
-    apt update && \
-    apt install -y locales && \
-    locale-gen en_US.UTF-8 ru_RU.UTF-8 && \
-    update-locale LANG=ru_RU.UTF-8 LC_MESSAGES=POSIX && \
+    apt-get update && \
+    apt-get install -y locales && \
+    locale-gen en_US.UTF-8 && \
+    locale-gen ru_RU.UTF-8 && \
+    update-locale LANG=en_US.UTF-8 LC_MESSAGES=POSIX && \
     rm -rf /var/lib/apt/lists/*
 
+ENV \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    LANGUAGE=en_US:en
+
 FROM config AS deps
+
+ARG USERNAME
 
 RUN apt update
 RUN apt-get autoremove && apt-get clean
 RUN apt-get install -y \
         # Основные утилиты
-        systemd dbus \
         sudo \
         curl \
         wget \
@@ -96,19 +89,19 @@ RUN apt-get install -y \
         watch \
         bc \
         --no-install-recommends
-RUN apt install -y \
+RUN apt-get install -y \
         btop \
         htop \
         thefuck \
         stow \
         eza \
         fzf
-RUN apt install -y \
+RUN apt-get install -y \
         zsh \
         zsh-antigen \
         zsh-syntax-highlighting \
         zsh-autosuggestions
-RUN apt install -y \
+RUN apt-get install -y \
         golang-go \
         zsh-antigen \
         nodejs \
@@ -120,6 +113,10 @@ RUN ln -sf /usr/bin/fd   /usr/local/bin/fd && \
 RUN rm -rf /var/lib/apt/lists/* && update-ca-certificates --fresh
 
 FROM deps AS user
+
+ARG USERNAME
+ARG USER_UID
+ARG USER_GID
 
 # current user (add docker group, implement docker group, create current user, setting sudo)
 RUN \
@@ -137,10 +134,15 @@ RUN \
     fi; \
     \
     if getent passwd ${USER_UID} >/dev/null; then \
-        userdel $(getent passwd ${USER_UID} | cut -d: -f1); \
+        existing_user=$(getent passwd ${USER_UID} | cut -d: -f1); \
+        if [ "${existing_user}" != "${USERNAME}" ]; then \
+            userdel -r ${existing_user}; \
+        fi; \
     fi; \
     \
-    useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/zsh ${USERNAME}; \
+    if ! getent passwd ${USERNAME} >/dev/null; then \
+        useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/zsh ${USERNAME}; \
+    fi; \
     \
     echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers; \
     \
@@ -150,14 +152,10 @@ RUN \
     echo "User created: $(getent passwd ${USERNAME})"; \
     echo "Groups: $(groups ${USERNAME})"
 
-USER $USERNAME
-WORKDIR /home/$USERNAME
-
 FROM user AS systemd
 
 RUN apt-get update && \
-    apt-get install -y systemd systemd-sysv dbus sudo locales tzdata && \
-    apt-get install -y curl wget git zsh fzf ripgrep jq fd-find eza htop btop && \
+    apt-get install -y systemd systemd-sysv dbus tzdata && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # delete unused units systemd for container performance
@@ -171,21 +169,26 @@ RUN (cd /lib/systemd/system/sysinit.target.wants/; \
     rm -f /lib/systemd/system/basic.target.wants/*; \
     rm -f /lib/systemd/system/anaconda.target.wants/*
 
-FROM systemd as dots
+FROM systemd AS dots
 
 ARG DOTFILES_DIR=.dotfiles
 ARG CUSTOM_DOTS_URL=https://github.com/ZeiZel/dotfiles.git
+ARG USERNAME
 
 USER $USERNAME
 WORKDIR /home/$USERNAME
 
-# dots
 RUN rm -rf /home/$USERNAME/$DOTFILES_DIR
 RUN git clone $CUSTOM_DOTS_URL /home/$USERNAME/$DOTFILES_DIR
 RUN chown -R $USERNAME:$USERNAME /home/$USERNAME/$DOTFILES_DIR
+
+FROM dots AS zsh
+
+ARG USERNAME
+
+USER $USERNAME
 WORKDIR /home/$USERNAME/$DOTFILES_DIR
 
-# Configure ZSH
 RUN curl -kfsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash \
     && echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc \
     && { [ -f ~/${DOTFILES_DIR}/.zshrc ] && rm -rf ~/.zshrc && ln -sf ~/${DOTFILES_DIR}/.zshrc ~/.zshrc || true; } \
@@ -198,20 +201,74 @@ RUN \
     && ln -s ~/$DOTFILES_DIR/zshrc/.zshrc ~/.zshrc \
     && stow .
 
-# brew
+FROM zsh AS brew
+
+ARG USE_INSECURE_REQ=1
+ARG PROXY_URL
+ARG PROXY_PORT
+ARG USERNAME
+
 WORKDIR /home/$USERNAME
 
+USER root
+
+# insecure flag
+RUN \
+    if [ "${USE_INSECURE_REQ}" = "1" ]; then \
+      echo "export HOMEBREW_SSL_FLAG=1" >> /etc/profile.d/ssl_flags.sh; \
+    else \
+      echo "export HOMEBREW_SSL_FLAG=0" >> /etc/profile.d/ssl_flags.sh; \
+    fi
+
+# gen proxy
+RUN if [ -n "${PROXY_URL}" ]; then \
+      echo "export HTTPS_PROXY=${PROXY_URL}" >> /etc/environment; \
+      echo "export HTTP_PROXY=${PROXY_URL}" >> /etc/environment; \
+    elif [ -n "${PROXY_PORT}" ]; then \
+      echo "export HTTPS_PROXY=http://host.docker.internal:${PROXY_PORT}" >> /etc/environment; \
+      echo "export HTTP_PROXY=http://host.docker.internal:${PROXY_PORT}" >> /etc/environment; \
+    fi
+RUN if [ -f /etc/environment ]; then \
+      export $(grep -v '^#' /etc/environment | xargs); \
+    fi
+
+RUN mkdir -p /run && touch /run/.containerenv
+
+USER $USERNAME
+
+ENV \
+    NONINTERACTIVE=1 \
+    HOMEBREW_FORCE_BREWED_CURL=1 \
+    HOMEBREW_NO_SSL=1 \
+    HOMEBREW_INSTALL_FROM_API=1 \
+    HOMEBREW_CURLRC=1 \
+    HOMEBREW_CURL_SSL_VERIFY=0
+
+#    HOMEBREW_FORCE_BREWED_CURL=${HOMEBREW_SSL_FLAG} \
+#    HOMEBREW_NO_SSL=${HOMEBREW_SSL_FLAG} \
+#    HOMEBREW_INSTALL_FROM_API=${HOMEBREW_SSL_FLAG} \
+#    HOMEBREW_CURLRC=${HOMEBREW_SSL_FLAG} \
+#    HOMEBREW_CURL_SSL_VERIFY=0
+
 RUN echo "insecure" > ~/.curlrc
-RUN mkdir -p /run && touch /run/.containerenv && NONINTERACTIVE=1 /bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-RUN echo >> /home/$USERNAME/.zshrc \
+
+RUN /bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+RUN \
+    echo >> /home/$USERNAME/.zshrc \
     && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/$USERNAME/.zshrc \
     && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 RUN source ~/.zshrc || true
 RUN cd ~/.config && brew bundle || true
 
+# nvm
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 
-# tmux
+FROM brew AS tpm
+
+ARG USERNAME
+
+USER $USERNAME
+
 RUN if [ ! -d ~/.tmux ]; then mkdir -p ~/.tmux; fi
 RUN cd ~/.tmux || exit 1
 RUN git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
@@ -221,16 +278,26 @@ RUN source $HOME/.zshrc || true
 
 RUN echo "Install ended! :)"
 
-FROM dots as docker
+FROM tpm AS docker
+
+ARG USERNAME
+
+USER $USERNAME
 
 RUN curl -o- https://get.docker.com | bash
 
+USER root
+
 COPY ./scripts/systemd/post-boot.sh /usr/local/bin/post-boot.sh
-RUN chmod +x /usr/local/bin/post-boot.sh && \
+RUN \
+    chmod +x /usr/local/bin/post-boot.sh && \
+    chown root:root /usr/local/bin/post-boot.sh && \
     printf "[Unit]\nDescription=Post-Boot Initialization Script\nAfter=multi-user.target\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/post-boot.sh\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n" > /etc/systemd/system/post-boot.service && \
     systemctl enable post-boot.service
 
-FROM docker as final
+FROM docker AS final
+
+ARG USERNAME
 
 VOLUME ["/sys/fs/cgroup"]
 WORKDIR /home/${USERNAME}

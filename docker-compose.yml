@@ -8,6 +8,7 @@ services:
         DISTRO_IMAGE: ${DISTRO_IMAGE}
         DISTRO_VERSION: ${DISTRO_VERSION}
         USERNAME: ${USER_NAME}
+        USER_PASSWORD: ${USER_PASSWORD:-1234}
         USER_UID: 1000
         USER_GID: 1000
         DOTFILES_DIR: ${DOTFILES_DIR:-.dotfiles}

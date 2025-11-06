@@ -1,6 +1,7 @@
 ARG DISTRO_IMAGE=ubuntu
 ARG DISTRO_VERSION=24.04
 ARG USERNAME=any
+ARG USER_PASSWORD=1234
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG USE_INSECURE_REQ=1
@@ -117,6 +118,7 @@ FROM deps AS user
 ARG USERNAME
 ARG USER_UID
 ARG USER_GID
+ARG USER_PASSWORD
 
 # current user (add docker group, implement docker group, create current user, setting sudo)
 RUN \
@@ -146,11 +148,19 @@ RUN \
     \
     echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers; \
     \
+    if [ -n "${USER_PASSWORD}" ]; then \
+        echo "${USERNAME}:${USER_PASSWORD}" | chpasswd; \
+    fi; \
+    \
     usermod -aG sudo ${USERNAME}; \
     usermod -aG docker ${USERNAME}; \
     \
     echo "User created: $(getent passwd ${USERNAME})"; \
     echo "Groups: $(groups ${USERNAME})"
+
+RUN echo "${USERNAME}:${USER_PASSWORD}" | chpasswd
+
+RUN visudo -c
 
 FROM user AS systemd
 
@@ -185,21 +195,19 @@ RUN chown -R $USERNAME:$USERNAME /home/$USERNAME/$DOTFILES_DIR
 FROM dots AS zsh
 
 ARG USERNAME
+ARG DOTFILES_DIR=.dotfiles
 
 USER $USERNAME
 WORKDIR /home/$USERNAME/$DOTFILES_DIR
 
-RUN curl -kfsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash \
-    && echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc \
-    && { [ -f ~/${DOTFILES_DIR}/.zshrc ] && rm -rf ~/.zshrc && ln -sf ~/${DOTFILES_DIR}/.zshrc ~/.zshrc || true; } \
-    && { [ -f ~/${DOTFILES_DIR}/.gitconfig ] && rm -rf ~/.gitconfig && ln -sf ~/${DOTFILES_DIR}/.gitconfig ~/.gitconfig || true; }
+RUN curl -kfsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash
+RUN \
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/$USERNAME/$DOTFILES_DIR/.zshrc \
+    && { [ -f /home/$USERNAME/$DOTFILES_DIR/.zshrc ] && rm -rf /home/$USERNAME/.zshrc && ln -sf /home/$USERNAME/$DOTFILES_DIR/zshrc/.zshrc /home/$USERNAME/.zshrc || true; } \
+    && { [ -f /home/$USERNAME/$DOTFILES_DIR/.gitconfig ] && rm -rf /home/$USERNAME/.gitconfig && ln -sf /home/$USERNAME/$DOTFILES_DIR/.gitconfig /home/$USERNAME/.gitconfig || true; }
 RUN git clone https://github.com/zsh-users/antigen.git ~/antigen
 RUN /bin/zsh -c 'source ~/antigen/antigen.zsh'
-RUN \
-    mkdir -p ~/.config \
-    && rm ~/.zshrc \
-    && ln -s ~/$DOTFILES_DIR/zshrc/.zshrc ~/.zshrc \
-    && stow .
+RUN mkdir -p ~/.config && stow .
 
 FROM zsh AS brew
 
@@ -207,63 +215,73 @@ ARG USE_INSECURE_REQ=1
 ARG PROXY_URL
 ARG PROXY_PORT
 ARG USERNAME
+ARG DOTFILES_DIR=.dotfiles
 
 WORKDIR /home/$USERNAME
 
 USER root
 
-# insecure flag
-RUN \
-    if [ "${USE_INSECURE_REQ}" = "1" ]; then \
-      echo "export HOMEBREW_SSL_FLAG=1" >> /etc/profile.d/ssl_flags.sh; \
-    else \
-      echo "export HOMEBREW_SSL_FLAG=0" >> /etc/profile.d/ssl_flags.sh; \
-    fi
+COPY ./scripts/brew/setup-env.sh /usr/local/bin/setup-brew-env.sh
+COPY ./scripts/proxy/setup-proxy.sh /usr/local/bin/setup-proxy.sh
 
-# gen proxy
-RUN if [ -n "${PROXY_URL}" ]; then \
-      echo "export HTTPS_PROXY=${PROXY_URL}" >> /etc/environment; \
-      echo "export HTTP_PROXY=${PROXY_URL}" >> /etc/environment; \
-    elif [ -n "${PROXY_PORT}" ]; then \
-      echo "export HTTPS_PROXY=http://host.docker.internal:${PROXY_PORT}" >> /etc/environment; \
-      echo "export HTTP_PROXY=http://host.docker.internal:${PROXY_PORT}" >> /etc/environment; \
-    fi
-RUN if [ -f /etc/environment ]; then \
-      export $(grep -v '^#' /etc/environment | xargs); \
-    fi
+RUN chmod +x /usr/local/bin/setup-brew-env.sh
 
+# configure proxy
+RUN /usr/local/bin/setup-proxy.sh "${PROXY_URL}" "${PROXY_PORT}" "/tmp/proxy.env"
+
+# make fake containerenv for brew
 RUN mkdir -p /run && touch /run/.containerenv
 
 USER $USERNAME
 
-ENV \
-    NONINTERACTIVE=1 \
-    HOMEBREW_FORCE_BREWED_CURL=1 \
-    HOMEBREW_NO_SSL=1 \
-    HOMEBREW_INSTALL_FROM_API=1 \
-    HOMEBREW_CURLRC=1 \
-    HOMEBREW_CURL_SSL_VERIFY=0
+RUN /usr/local/bin/setup-brew-env.sh "${USE_INSECURE_REQ}" "$HOME/.brew_env"
 
-#    HOMEBREW_FORCE_BREWED_CURL=${HOMEBREW_SSL_FLAG} \
-#    HOMEBREW_NO_SSL=${HOMEBREW_SSL_FLAG} \
-#    HOMEBREW_INSTALL_FROM_API=${HOMEBREW_SSL_FLAG} \
-#    HOMEBREW_CURLRC=${HOMEBREW_SSL_FLAG} \
-#    HOMEBREW_CURL_SSL_VERIFY=0
+# if insecure enabled - insecured curl
+RUN if [ "${USE_INSECURE_REQ}" = "1" ]; then \
+      echo "insecure" > ~/.curlrc; \
+    fi
 
-RUN echo "insecure" > ~/.curlrc
+# loading proxy for current user
+RUN if [ -f /tmp/proxy.env ]; then \
+      cat /tmp/proxy.env >> ~/.brew_env; \
+    fi
 
-RUN /bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 RUN \
-    echo >> /home/$USERNAME/.zshrc \
-    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/$USERNAME/.zshrc \
+    set -a && \
+    . ~/.brew_env && \
+    set +a && \
+    /bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+RUN \
+    echo >> /home/$USERNAME/$DOTFILES_DIR/zshrc/.zshrc \
+    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/$USERNAME/$DOTFILES_DIR/.zshrc \
     && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-RUN source ~/.zshrc || true
-RUN cd ~/.config && brew bundle || true
+RUN /bin/zsh -c "source /home/$USERNAME/.zshrc"
 
-# nvm
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+# set zsh as default
+RUN chsh -s /bin/zsh root || true
+RUN chsh -s /bin/zsh $USERNAME || true
+RUN echo "SHELL=/bin/zsh" >> /etc/default/useradd || true
+RUN grep -qxF '/bin/zsh' /etc/shells || echo '/bin/zsh' >> /etc/shells
 
-FROM brew AS tpm
+FROM brew AS brew-deps
+
+ARG USERNAME
+WORKDIR /home/$USERNAME
+USER $USERNAME
+
+RUN /bin/zsh -c '. ~/.zshrc && \
+    set -a && \
+    . ~/.brew_env && \
+    set +a && \
+    brew bundle --file=~/.config/Brewfile || true'
+
+RUN /bin/zsh -c '. ~/.zshrc && \
+    set -a && \
+    . ~/.brew_env && \
+    set +a && \
+    brew install nvm || true'
+
+FROM brew-deps AS tpm
 
 ARG USERNAME
 
@@ -299,6 +317,17 @@ FROM docker AS final
 
 ARG USERNAME
 
+USER root
+
+COPY ./scripts/systemd/post-boot.sh /usr/local/bin/post-boot.sh
+COPY ./scripts/systemd/setup-systemd.sh /usr/local/bin/setup-systemd.sh
+
+RUN chmod +x /usr/local/bin/post-boot.sh /usr/local/bin/setup-systemd.sh && \
+    chown root:root /usr/local/bin/post-boot.sh /usr/local/bin/setup-systemd.sh
+
+RUN /usr/local/bin/setup-systemd.sh "${USERNAME}" "/usr/local/bin/post-boot.sh"
+
+ENV USERNAME=${USERNAME}
 VOLUME ["/sys/fs/cgroup"]
 WORKDIR /home/${USERNAME}
 CMD ["/sbin/init"]

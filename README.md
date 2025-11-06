@@ -18,7 +18,7 @@ Create `.env` based on `.env.example` and you should change:
 
 ### Build image
 
-Docker compose:
+Docker compose (the best way):
 
 ```bash
 docker compose up -d
@@ -41,18 +41,29 @@ docker run -itd \
 ### Connect to image
 
 ```bash
-docker exec -it ubuntu-dev-systemd zsh
+docker exec -it -u <your_user> <container_name> /bin/zsh
+# docker exec -it -u zeizel ubuntu-systemd /bin/zsh
 ```
 
 ## Troubleshooting
 
-### Image not pull automaticly
+### Image not pull automatically
 
 You may need to install image manually
 
 ```bash
 docker pull ubuntu:24.04
 ```
+
+### Windows
+
+#### Git bash
+
+Because on win bash convert `/` paths to `C:/Users/<user>/AppData/Local/Programs/Git/`, we might have some problems with it :/
+
+Solve is: 
+1. just not using `bash` and go to `powershell` or `cmd`
+2. use `export MSYS_NO_PATHCONV=1`
 
 ## TODO
 

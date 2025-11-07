@@ -12,24 +12,20 @@ FROM base AS config
 ENV \
     DEBIAN_FRONTEND=noninteractive \
     container=docker \
+    \
     TZ=UTC \
     LC_ALL=C \
+    \
     USER_NAME=${USERNAME} \
     USER_UID=${USER_UID} \
-    USER_GID=${USER_GID}
-
-ENV \
+    USER_GID=${USER_GID} \
+    \
     CURLOPT_SSL_VERIFYPEER=${HOMEBREW_SSL_FLAG} \
     CURLOPT_SSL_VERIFYHOST=${HOMEBREW_SSL_FLAG}
 
-# locale install: en, ru
-RUN \
-    apt-get update && \
-    apt-get install -y locales && \
-    locale-gen en_US.UTF-8 && \
-    locale-gen ru_RU.UTF-8 && \
-    update-locale LANG=en_US.UTF-8 LC_MESSAGES=POSIX && \
-    rm -rf /var/lib/apt/lists/*
+COPY ./scripts/system/setup-locale.sh /usr/local/bin/setup-locale.sh
+RUN chmod +x /usr/local/bin/setup-locale.sh
+RUN /usr/local/bin/setup-locale.sh
 
 ENV \
     LANG=en_US.UTF-8 \
@@ -40,78 +36,10 @@ FROM config AS deps
 
 ARG USERNAME
 
-RUN apt update
-RUN apt-get autoremove && apt-get clean
-RUN apt-get install -y \
-        # Основные утилиты
-        sudo \
-        curl \
-        wget \
-        gnupg \
-        apt-transport-https \
-        ca-certificates \
-        xz-utils \
-        unzip \
-        zip \
-        iputils-ping \
-        # Git, CLI
-        git \
-        gh \
-        glab \
-        # Python
-        python3 \
-        python3-pip \
-        python3-venv \
-        # Текст и поиск
-        nano \
-        less \
-        bash \
-        make \
-        gcc \
-        cargo \
-        bc \
-        ed \
-        gawk \
-        findutils \
-        diffutils \
-        coreutils \
-        # Инструменты
-        fd-find \
-        ripgrep \
-        zoxide \
-        jq \
-        yq \
-        poppler-utils \
-        imagemagick \
-        ffmpeg \
-        ffmpegthumbnailer \
-        p7zip-full \
-        atool \
-        watch \
-        bc \
-        --no-install-recommends
-RUN apt-get install -y \
-        btop \
-        htop \
-        thefuck \
-        stow \
-        eza \
-        fzf
-RUN apt-get install -y \
-        zsh \
-        zsh-antigen \
-        zsh-syntax-highlighting \
-        zsh-autosuggestions
-RUN apt-get install -y \
-        golang-go \
-        zsh-antigen \
-        nodejs \
-        npm
-RUN ln -sf /usr/bin/fd   /usr/local/bin/fd && \
-    ln -sf /usr/bin/grep /usr/bin/ggrep && \
-    ln -sf /usr/bin/sed  /usr/bin/gsed && \
-    ln -sf /usr/bin/tar  /usr/bin/gtar
-RUN rm -rf /var/lib/apt/lists/* && update-ca-certificates --fresh
+COPY ./scripts/system/install-deps.sh /usr/local/bin/install-deps.sh
+RUN chmod +x /usr/local/bin/install-deps.sh
+
+RUN /usr/local/bin/install-deps.sh
 
 FROM deps AS user
 
@@ -120,47 +48,9 @@ ARG USER_UID
 ARG USER_GID
 ARG USER_PASSWORD
 
-# current user (add docker group, implement docker group, create current user, setting sudo)
-RUN \
-    if ! getent group docker >/dev/null; then \
-        groupadd -g 999 docker; \
-    fi; \
-    \
-    if getent group ${USER_GID} >/dev/null; then \
-        existing_group=$(getent group ${USER_GID} | cut -d: -f1); \
-        if [ "${existing_group}" != "${USERNAME}" ]; then \
-            groupmod -n ${USERNAME} ${existing_group}; \
-        fi; \
-    else \
-        groupadd --gid ${USER_GID} ${USERNAME}; \
-    fi; \
-    \
-    if getent passwd ${USER_UID} >/dev/null; then \
-        existing_user=$(getent passwd ${USER_UID} | cut -d: -f1); \
-        if [ "${existing_user}" != "${USERNAME}" ]; then \
-            userdel -r ${existing_user}; \
-        fi; \
-    fi; \
-    \
-    if ! getent passwd ${USERNAME} >/dev/null; then \
-        useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/zsh ${USERNAME}; \
-    fi; \
-    \
-    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers; \
-    \
-    if [ -n "${USER_PASSWORD}" ]; then \
-        echo "${USERNAME}:${USER_PASSWORD}" | chpasswd; \
-    fi; \
-    \
-    usermod -aG sudo ${USERNAME}; \
-    usermod -aG docker ${USERNAME}; \
-    \
-    echo "User created: $(getent passwd ${USERNAME})"; \
-    echo "Groups: $(groups ${USERNAME})"
-
-RUN echo "${USERNAME}:${USER_PASSWORD}" | chpasswd
-
-RUN visudo -c
+COPY ./scripts/system/generate-user.sh /usr/local/bin/generate-user.sh
+RUN chmod +x /usr/local/bin/generate-user.sh
+RUN /usr/local/bin/generate-user.sh "${USERNAME}" "${USER_UID}" "${USER_GID}" "${USER_PASSWORD}"
 
 FROM user AS systemd
 
@@ -201,13 +91,18 @@ USER $USERNAME
 WORKDIR /home/$USERNAME/$DOTFILES_DIR
 
 RUN curl -kfsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash
-RUN \
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/$USERNAME/$DOTFILES_DIR/.zshrc \
-    && { [ -f /home/$USERNAME/$DOTFILES_DIR/.zshrc ] && rm -rf /home/$USERNAME/.zshrc && ln -sf /home/$USERNAME/$DOTFILES_DIR/zshrc/.zshrc /home/$USERNAME/.zshrc || true; } \
-    && { [ -f /home/$USERNAME/$DOTFILES_DIR/.gitconfig ] && rm -rf /home/$USERNAME/.gitconfig && ln -sf /home/$USERNAME/$DOTFILES_DIR/.gitconfig /home/$USERNAME/.gitconfig || true; }
+RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/$USERNAME/$DOTFILES_DIR/zshrc/.zshrc
+RUN ln -sf /home/$USERNAME/$DOTFILES_DIR/zshrc/.zshrc /home/$USERNAME/.zshrc \
+    && ln -sf /home/$USERNAME/$DOTFILES_DIR/.gitconfig /home/$USERNAME/.gitconfig
 RUN git clone https://github.com/zsh-users/antigen.git ~/antigen
 RUN /bin/zsh -c 'source ~/antigen/antigen.zsh'
 RUN mkdir -p ~/.config && stow .
+
+# set zsh as default
+RUN chsh -s /bin/zsh root || true
+RUN chsh -s /bin/zsh $USERNAME || true
+RUN echo "SHELL=/bin/zsh" >> /etc/default/useradd || true
+RUN grep -qxF '/bin/zsh' /etc/shells || echo '/bin/zsh' >> /etc/shells
 
 FROM zsh AS brew
 
@@ -221,27 +116,24 @@ WORKDIR /home/$USERNAME
 
 USER root
 
-COPY ./scripts/brew/setup-env.sh /usr/local/bin/setup-brew-env.sh
+COPY ./scripts/brew/setup-env.sh    /usr/local/bin/setup-brew-env.sh
 COPY ./scripts/proxy/setup-proxy.sh /usr/local/bin/setup-proxy.sh
 
-RUN chmod +x /usr/local/bin/setup-brew-env.sh
+RUN chmod +x /usr/local/bin/setup-brew-env.sh /usr/local/bin/setup-proxy.sh
 
-# configure proxy
 RUN /usr/local/bin/setup-proxy.sh "${PROXY_URL}" "${PROXY_PORT}" "/tmp/proxy.env"
-
-# make fake containerenv for brew
+RUN /usr/local/bin/setup-brew-env.sh "${USE_INSECURE_REQ}" "/tmp/brew_env"
 RUN mkdir -p /run && touch /run/.containerenv
+RUN echo "USE_INSECURE_REQ=${USE_INSECURE_REQ}" >> /etc/environment
 
 USER $USERNAME
 
-RUN /usr/local/bin/setup-brew-env.sh "${USE_INSECURE_REQ}" "$HOME/.brew_env"
+RUN cp /tmp/brew_env ~/.brew_env && chmod 644 ~/.brew_env
 
-# if insecure enabled - insecured curl
 RUN if [ "${USE_INSECURE_REQ}" = "1" ]; then \
       echo "insecure" > ~/.curlrc; \
     fi
 
-# loading proxy for current user
 RUN if [ -f /tmp/proxy.env ]; then \
       cat /tmp/proxy.env >> ~/.brew_env; \
     fi
@@ -251,17 +143,13 @@ RUN \
     . ~/.brew_env && \
     set +a && \
     /bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-RUN \
-    echo >> /home/$USERNAME/$DOTFILES_DIR/zshrc/.zshrc \
-    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/$USERNAME/$DOTFILES_DIR/.zshrc \
-    && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-RUN /bin/zsh -c "source /home/$USERNAME/.zshrc"
 
-# set zsh as default
-RUN chsh -s /bin/zsh root || true
-RUN chsh -s /bin/zsh $USERNAME || true
-RUN echo "SHELL=/bin/zsh" >> /etc/default/useradd || true
-RUN grep -qxF '/bin/zsh' /etc/shells || echo '/bin/zsh' >> /etc/shells
+RUN \
+    REAL_ZSHRC=$(readlink -f ~/.zshrc || echo ~/.zshrc) \
+    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> "$REAL_ZSHRC" \
+    && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+RUN /bin/zsh -c ". /etc/profile.d/homebrew-env.sh && source /home/$USERNAME/.zshrc"
 
 FROM brew AS brew-deps
 

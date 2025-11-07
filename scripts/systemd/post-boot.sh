@@ -7,6 +7,11 @@ SHELL_PATH="/bin/zsh"
 echo "[INFO] Post-boot setup started"
 echo "[INFO] USERNAME: $USERNAME"
 
+if [ -f /etc/profile.d/homebrew-env.sh ]; then
+    echo "[INFO] Loading Homebrew environment variables"
+    . /etc/profile.d/homebrew-env.sh
+fi
+
 # 1. zsh as default
 if id "$USERNAME" &>/dev/null; then
     echo "[INFO] Setting default shell to zsh for user $USERNAME"
@@ -47,5 +52,7 @@ if systemctl list-unit-files | grep -q docker.service; then
     systemctl enable docker || echo "[WARN] Failed to enable docker"
 fi
 
-echo "[INFO] Post-boot script completed"
+echo "[INFO] ========================================="
+echo "[INFO] Post-boot setup completed"
+echo "[INFO] ========================================="
 exit 0

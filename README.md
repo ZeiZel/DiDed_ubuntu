@@ -45,6 +45,11 @@ docker exec -it -u <your_user> <container_name> /bin/zsh
 # docker exec -it -u zeizel ubuntu-systemd /bin/zsh
 ```
 
+### External working directory
+
+1. Set `WORKING_DIRECTORY`
+2. In container go to `/mnt`
+
 ## Troubleshooting
 
 ### Image not pull automatically
@@ -53,6 +58,17 @@ You may need to install image manually
 
 ```bash
 docker pull ubuntu:24.04
+```
+
+### Brew (still broken)
+
+Needs manual installation
+
+```bash
+/bin/bash -c "$(curl -kfsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+brew install gcc nvm
+brew bundle --file=~/.config/Brewfile
 ```
 
 ### Windows
@@ -68,3 +84,4 @@ Solve is:
 ## TODO
 
 - [ ] Need to create more comprehensive dots clone script (now it works only with stow-based configs)
+- [ ] Fix brew installation (permission denied in build)
